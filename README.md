@@ -8,8 +8,8 @@ file name example: 20220101_000528_1212076583_第九届监事会第一次会议�
 
 ## Usage
 Use the below code for the params: category, exchange, sortName, sortType. 
-Multiple inputs are allowed, separated by semicolon (;)  
-Simply add the codes on the left of the arrow (=>) sign to the params.  
+Multiple inputs are allowed, separated by semicolon (;). Simply add the 
+codes on the left of the arrow sign (=>) to the params.  
 
 ### 板块 Exchange  
 sz => 深市 Shenzhen Stock Exchange  
