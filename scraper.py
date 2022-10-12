@@ -58,7 +58,7 @@ class CninfoScraper:
             'Accept-Language': 'en-US,en;q=0.9',
         }
         self.params = {
-            "page_num": self.page_num,
+            "pageNum": self.page_num,
             "pageSize": "30",
             "column": "szse",
             "tabName": "fulltext",
@@ -93,11 +93,13 @@ class CninfoScraper:
             res = self.session.get(report_url)
             res.raise_for_status()
             self.insert_database(report, self.download_subpath)
+            if os.path.exists(self.report_path):
+                return False, 'file already exists'
             with open(os.path.abspath(self.report_path), 'wb') as f:
                 f.write(res.content)
-            return True
+            return True, 'success'
         except:
-            return False
+            return False, 'error'
 
     def init_download_path(self):
         subpath_list = os.listdir(self.download_path)
@@ -187,6 +189,7 @@ class CninfoScraper:
         total_count = 0
         fail_count = 0
         success_count = 0
+        duplicate_count = 0
         self.get_requests_details()
         res = requests.post(
             self.url, headers=self.headers, params=self.params)
@@ -202,21 +205,24 @@ class CninfoScraper:
                 break
             for report in self.response['announcements']:
                 total_count += 1
-                report_success = self.download_report(report)
+                report_success, report_status = self.download_report(report)
                 if report_success:
                     self.logger.info(f"[Success] {self.report_path}")
                     pbar.update(1)
                     success_count += 1
                 else:
-                    self.logger.error(f"[Fail] {self.report_path}")
-                    fail_count += 1
+                    self.logger.error(f"[Fail-{report_status}] {self.report_path}")
+                    if report_status == 'error':
+                        fail_count += 1
+                    else:
+                        duplicate_count += 1
 
             if self.response['hasMore'] and self.page_num < self.response['totalpages']:
                 self.page_num += 1
                 continue
             else:
                 break
-        self.logger.info(f"Total: {total_count}, Success: {success_count}, Fail: {fail_count}")
+        self.logger.info(f"Total: {total_count}, Success: {success_count}, Fail: {fail_count}, Duplicate: {duplicate_count}")
         self.logger.info(f'Process ended at {datetime.now()}')
         self.logger.info('=' * 65)
         self.close_database()
@@ -259,7 +265,7 @@ def get_yearly_data(year):
 
 def multithreading(start_year, end_year):
     threads = []
-    for year_range in range(end_year, start_year, -5):
+    for year_range in range(end_year, start_year, - 5):
         for year in range(year_range, year_range - 5, -1):
             if year < start_year or year > end_year:
                 continue
