@@ -7,21 +7,21 @@ import logging
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import threading
-from dateutil.rrule import rrule, MONTHLY, YEARLY
+from dateutil.rrule import rrule, DAILY, MONTHLY, YEARLY
 from dateutil.relativedelta import relativedelta
 
 
-def init_logger():
-    log_file_name = 'reports_download.log'
-    logger = logging.getLogger('my_logger')
+def init_logger(logger_name='reports_download.log'):
+    # log_file_name = logger_name
+    logger = logging.getLogger(logger_name)
     # set log level and format
     logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s', '%Y%m%d %H:%M:%S')
     # file handler config
-    file_handler = logging.FileHandler(log_file_name)
+    file_handler = logging.FileHandler(logger_name)
     file_handler.setFormatter(formatter)
     file_handler.setLevel(logging.DEBUG)
-    file_handler.set_name('my_file_handler')
+    file_handler.set_name(logger_name+'_handler')
     logger.addHandler(file_handler)
     # Initial log
     logger.info(f'Download started at {datetime.now()}')
@@ -30,7 +30,8 @@ def init_logger():
 
 
 class CninfoScraper:
-    def __init__(self, logger, start_date, end_date, category="", exchange="", sort_name="date", sort_type="asc", download_path="download", page_num=1):
+    def __init__(self, logger, start_date, end_date, category="", exchange="", sort_name="time", sort_type="asc",
+                 download_path="download", page_num=1):
         """
         :param start_date: start date of query, format: YYYY-MM-DD
         :param end_date: end date of query, format: YYYY-MM-DD
@@ -101,9 +102,11 @@ class CninfoScraper:
     def download_report(self, report):
         report_url = f"http://static.cninfo.com.cn/{report['adjunctUrl']}"
         report_date = datetime.strftime(datetime.fromtimestamp(int(report['announcementTime'])/1000).date(), '%Y%m%d')
-        self.report_name = f"{report_date}_{report['secCode']}_{report['announcementId']}_{report['announcementTitle'].replace(' ', '-')}.pdf"
+        self.report_name = f"{report_date}_{report['secCode']}_{report['announcementId']}_" \
+                           f"{report['announcementTitle'].replace(' ', '-').replace('/', '-')}.pdf"
         self.download_subpath = self.init_download_path()
         self.report_path = os.path.join(self.download_subpath, self.report_name)
+
 
         res = self.session.get(report_url)
         res.raise_for_status()
@@ -114,7 +117,10 @@ class CninfoScraper:
 
     def init_download_path(self):
         subpath_list = os.listdir(self.download_path)
-        subpath_list = [folder for folder in subpath_list if not folder.startswith('.')]
+        subpath_list = [folder for folder in subpath_list
+                        if not folder.startswith('.')
+                        and not folder.endswith('.db')
+                        and not folder.endswith('.log')]
         if len(subpath_list) > 0:
             download_subpath = os.path.join(
                 self.download_path, max(subpath_list))
@@ -127,7 +133,7 @@ class CninfoScraper:
         return download_subpath
 
     def init_database(self):
-        self.conn = sqlite3.connect("reports_metadata.db")
+        self.conn = sqlite3.connect(os.path.join(self.download_path, "reports_metadata.db"))
         self.cur = self.conn.cursor()
         self.cur.execute('''CREATE TABLE IF NOT EXISTS reports
             (
@@ -193,7 +199,7 @@ class CninfoScraper:
         self.conn.commit()
         self.conn.close()
 
-    def scraper(self):
+    def scrape(self):
         total_count = 0
         fail_count = 0
         success_count = 0
@@ -221,51 +227,51 @@ class CninfoScraper:
                     self.logger.error(f"[Fail] {self.report_path}")
                     fail_count += 1
 
-            if self.response['hasMore']:
+            if self.response['hasMore'] or self.page_num < self.response['totalAnnouncement']:
                 self.page_num += 1
                 continue
             else:
                 break
         self.logger.info(f"Total: {total_count}, Success: {success_count}, Fail: {fail_count}")
         self.logger.info(f'Process ended at {datetime.now()}')
+        self.logger.info('=' * 65)
         self.close_database()
         pbar.close()
-
-
-def main(start_date, end_date):
-    scraper = CninfoScraper(logger, start_date=start_date, end_date=end_date)
-    scraper.scraper()
 
 
 def multithreading(start_year, end_year):
     threads = []
     for year in range(end_year, start_year-1, -1):
-        logger.info('=' * 65)
-        logger.info(f"Fetching year: {year}")
-        for dt in rrule(MONTHLY, dtstart=datetime(year, 1, 1), until=datetime(year, 12, 31)):
-            start_date = datetime.strftime(dt, '%Y%m%d')
-            end_date = datetime.strftime(dt + relativedelta(months=1) - relativedelta(days=1), '%Y%m%d')
-            t = threading.Thread(target=main, args=(start_date, end_date))
-            threads.append(t)
-            t.start()
-        for t in threads:
-            t.join()
+        t = threading.Thread(target=get_yearly_data, args=(year,))
+        threads.append(t)
+        t.start()
+    for t in threads:
+        t.join()
 
 
-def loop(start_year, end_year):
-    for year in range(end_year, start_year-1, -1):
-        logger.info('=' * 65)
-        logger.info(f"Fetching year: {year}")
-        for dt in rrule(MONTHLY, dtstart=datetime(year, 1, 1), until=datetime(year, 12, 31)):
+def get_yearly_data(year):
+    if not os.path.exists(os.path.join('download', str(year))):
+        os.makedirs(os.path.join('download', str(year)))
+    logger = init_logger(logger_name=f'download/{year}/reports_download{year}.log')
+    logger.info('=' * 65)
+    logger.info(f"Fetching year: {year}")
+    for month in rrule(MONTHLY, dtstart=datetime(year, 1, 1), until=datetime(year, 12, 31)):
+        logger.info(f"Fetching month: {month}")
+        for dt in rrule(DAILY, dtstart=month, until=month + relativedelta(months=1) - relativedelta(days=1)):
+            logger.info(f"Fetching day: {dt}")
             start_date = datetime.strftime(dt, '%Y-%m-%d')
-            end_date = datetime.strftime(dt + relativedelta(months=1) - relativedelta(days=1), '%Y-%m-%d')
-            main(start_date, end_date)
+            end_date = datetime.strftime(dt+relativedelta(days=1), '%Y-%m-%d')
+            scraper = CninfoScraper(logger, download_path=f'download/{year}', start_date=start_date, end_date=end_date)
+            scraper.scrape()
+
+
+def main(start_year, end_year):
+    for year in range(end_year, start_year-1, -1):
+        get_yearly_data(year)
 
 
 if __name__ == "__main__":
-    logger = init_logger()
     start_year = 2000
     end_year = 2022
     # multithreading(start_year, end_year)
-    loop(start_year, end_year)
-
+    main(start_year, end_year)
