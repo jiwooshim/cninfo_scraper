@@ -11,24 +11,6 @@ from dateutil.rrule import rrule, DAILY, MONTHLY, YEARLY
 from dateutil.relativedelta import relativedelta
 
 
-def init_logger(logger_name='reports_download.log'):
-    # log_file_name = logger_name
-    logger = logging.getLogger(logger_name)
-    # set log level and format
-    logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s', '%Y%m%d %H:%M:%S')
-    # file handler config
-    file_handler = logging.FileHandler(logger_name)
-    file_handler.setFormatter(formatter)
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.set_name(logger_name+'_handler')
-    logger.addHandler(file_handler)
-    # Initial log
-    logger.info(f'Download started at {datetime.now()}')
-    logger.info('=' * 65)
-    return logger
-
-
 class CninfoScraper:
     def __init__(self, logger, start_date, end_date, category="", exchange="", sort_name="time", sort_type="asc",
                  download_path="download", page_num=1):
@@ -100,20 +82,22 @@ class CninfoScraper:
         self.session.mount('https://', adapter)
 
     def download_report(self, report):
-        report_url = f"http://static.cninfo.com.cn/{report['adjunctUrl']}"
-        report_date = datetime.strftime(datetime.fromtimestamp(int(report['announcementTime'])/1000).date(), '%Y%m%d')
-        self.report_name = f"{report_date}_{report['secCode']}_{report['announcementId']}_" \
-                           f"{report['announcementTitle'].replace(' ', '-').replace('/', '-')}.pdf"
-        self.download_subpath = self.init_download_path()
-        self.report_path = os.path.join(self.download_subpath, self.report_name)
+        try:
+            report_url = f"http://static.cninfo.com.cn/{report['adjunctUrl']}"
+            report_date = datetime.strftime(datetime.fromtimestamp(int(report['announcementTime'])/1000).date(), '%Y%m%d')
+            self.report_name = f"{report_date}_{report['secCode']}_{report['announcementId']}_" \
+                               f"{report['announcementTitle'].replace(' ', '-').replace('/', '-')}.pdf"
+            self.download_subpath = self.init_download_path()
+            self.report_path = os.path.join(self.download_subpath, self.report_name)
 
-
-        res = self.session.get(report_url)
-        res.raise_for_status()
-        self.insert_database(report, self.download_subpath)
-        with open(os.path.abspath(self.report_path), 'wb') as f:
-            f.write(res.content)
-        return True
+            res = self.session.get(report_url)
+            res.raise_for_status()
+            self.insert_database(report, self.download_subpath)
+            with open(os.path.abspath(self.report_path), 'wb') as f:
+                f.write(res.content)
+            return True
+        except:
+            return False
 
     def init_download_path(self):
         subpath_list = os.listdir(self.download_path)
@@ -227,7 +211,7 @@ class CninfoScraper:
                     self.logger.error(f"[Fail] {self.report_path}")
                     fail_count += 1
 
-            if self.response['hasMore'] or self.page_num < self.response['totalAnnouncement']:
+            if self.response['hasMore'] and self.page_num < self.response['totalpages']:
                 self.page_num += 1
                 continue
             else:
@@ -239,14 +223,22 @@ class CninfoScraper:
         pbar.close()
 
 
-def multithreading(start_year, end_year):
-    threads = []
-    for year in range(end_year, start_year-1, -1):
-        t = threading.Thread(target=get_yearly_data, args=(year,))
-        threads.append(t)
-        t.start()
-    for t in threads:
-        t.join()
+def init_logger(logger_name='reports_download.log'):
+    # log_file_name = logger_name
+    logger = logging.getLogger(logger_name)
+    # set log level and format
+    logger.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s', '%Y%m%d %H:%M:%S')
+    # file handler config
+    file_handler = logging.FileHandler(logger_name)
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.set_name(logger_name+'_handler')
+    logger.addHandler(file_handler)
+    # Initial log
+    logger.info(f'Download started at {datetime.now()}')
+    logger.info('=' * 65)
+    return logger
 
 
 def get_yearly_data(year):
@@ -265,6 +257,19 @@ def get_yearly_data(year):
             scraper.scrape()
 
 
+def multithreading(start_year, end_year):
+    threads = []
+    for year_range in range(end_year, start_year, -5):
+        for year in range(year_range, year_range - 5, -1):
+            if year < start_year or year > end_year:
+                continue
+            t = threading.Thread(target=get_yearly_data, args=(year,))
+            threads.append(t)
+            t.start()
+        for t in threads:
+            t.join()
+
+
 def main(start_year, end_year):
     for year in range(end_year, start_year-1, -1):
         get_yearly_data(year)
@@ -273,5 +278,5 @@ def main(start_year, end_year):
 if __name__ == "__main__":
     start_year = 2000
     end_year = 2022
-    # multithreading(start_year, end_year)
-    main(start_year, end_year)
+    multithreading(start_year, end_year)
+    # main(start_year, end_year)
